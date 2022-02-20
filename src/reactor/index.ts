@@ -125,12 +125,15 @@ const createLogical = (name: string): Logical => {
             value = v;
         },
         toString() {
-            return `${name}@${value??null}`
+            return `${name}@${value ?? null}`
         }
     }
 }
-const metaLogical = <Args extends string[]>(...args: Args): { [K in keyof Args]: MetaLogical } => {
-    return args.map(v => createMetaLogical(v)) as any
+const metaLogical = <Args extends string[]>(...args: Args): { [K in Args[number]]: MetaLogical } => {
+    return args.reduce((acc, v) => {
+        acc[v] = createMetaLogical(v);
+        return acc;
+    }, {} as any)
 }
 const matchHead = (head: Constraint[], list: Constraint[]) => {
     const run = (i: number, rest: Constraint[]): Constraint[][] => {
@@ -205,29 +208,28 @@ const runRules = (rules: Rule[]): Constraint[] => {
     activate(constraint('main'))
     return [...globalStore];
 }
-export const main = () => {
-
-    const [M, N, TMP] = metaLogical("M", "N", "TMP")
-    const rules = [
+const gcd = () => {
+    const l = metaLogical("M", "N", "TMP")
+    return [
         rule({
             name: 'main',
             headKept: [],
             headReplace: [constraint("main")],
             guard: [],
             body: [
-                statement([M, N], (m, n) => {
+                statement([l.M, l.N], (m, n) => {
                     m.set(21);
                     n.set(35);
                 }),
-                constraint('gcd', M),
-                constraint('gcd', N),
+                constraint('gcd', l.M),
+                constraint('gcd', l.N),
             ]
         }),
         rule({
             name: 'trivial',
             headKept: [],
-            headReplace: [constraint('gcd', M)],
-            guard: [expression([M], m => m.get() == 0)],
+            headReplace: [constraint('gcd', l.M)],
+            guard: [expression([l.M], m => m.get() == 0)],
             body: [
                 statement([], () => {
                 })
@@ -235,17 +237,46 @@ export const main = () => {
         }),
         rule({
             name: 'step',
-            headKept: [constraint('gcd', N)],
-            headReplace: [constraint('gcd', M)],
-            guard: [expression([M, N], (m, n) => {
+            headKept: [constraint('gcd', l.N)],
+            headReplace: [constraint('gcd', l.M)],
+            guard: [expression([l.M, l.N], (m, n) => {
                 return m.get() >= n.get()
             })],
             body: [
-                statement([M, N, TMP], (m, n, tmp) => tmp.set(m.get() - n.get())),
-                constraint('gcd', TMP)
+                statement([l.M, l.N, l.TMP], (m, n, tmp) => tmp.set(m.get() - n.get())),
+                constraint('gcd', l.TMP)
             ]
         })
     ]
+}
+const prime = () => {
+    const l = metaLogical("M", "N")
+    return [
+        rule({
+            name: 'main',
+            headKept: [],
+            headReplace: [constraint("main")],
+            guard: [],
+            body: [
+                ...Array.from({length: 400}).map((_, i) => {
+                    return constraint('prime', i + 2)
+                })
+            ]
+        }),
+        rule({
+            name: 'prime',
+            headKept: [constraint('prime', l.M)],
+            headReplace: [constraint('prime', l.N)],
+            guard: [expression([l.M, l.N], (m, n) => n.get() % m.get() === 0)],
+            body: [
+                statement([], () => {
+                })
+            ]
+        }),
+    ]
+}
+export const main = () => {
+    const rules = prime();
     const result = runRules(rules)
     console.log(`result`, result.join(','))
 }
