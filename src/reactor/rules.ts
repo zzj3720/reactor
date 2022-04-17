@@ -12,12 +12,10 @@ export class Rules {
         this.Order = []
     }
 
-    Add(ruleObj: RuleObj, globalReplacements: string[]) {
+    Add(ruleObj: RuleObj) {
         const self = this
 
-        const rule = new Rule(ruleObj, {
-            replacements: globalReplacements,
-        })
+        const rule = new Rule(ruleObj)
         const ruleName = rule.Name
 
         if (typeof this.rules[ruleName] !== 'undefined') {

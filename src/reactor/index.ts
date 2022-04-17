@@ -6,7 +6,7 @@ import type {History} from "./history";
 import {Term, TermType} from "./term";
 import {Logical, MetaLogical} from "./logical";
 import {Constraint} from "./constraint";
-import {isLogical, isLogicalOwner, isMetaLogical, isTerm} from "./is";
+import {isCompare, isLogical, isLogicalOwner, isMetaLogical, isTerm} from "./is";
 
 const No_Value = {};
 
@@ -42,11 +42,9 @@ export class CHR {
         this.Helper = Runtime.Helper
     }
 
-    init(program: { type: 'Program', body: RuleObj[] }) {
-        const replacements: string[] = []
-        const rules = program.body
+    init(rules: RuleObj[]) {
         rules.forEach((rule) => {
-            this.Rules.Add(rule, replacements)
+            this.Rules.Add(rule)
         })
     }
 
@@ -82,6 +80,9 @@ export class CHR {
         }
         if (isLogical(b)) {
             return this.ptnMatchAny(subst, a, this.resolve(b));
+        }
+        if (isCompare(a)) {
+            return a.equal(b)
         }
         return a === b;
     }
@@ -139,6 +140,9 @@ export class CHR {
         }
         if (isLogical(b)) {
             return this.matchAny(a, this.resolve(b));
+        }
+        if (isCompare(a)) {
+            return a.equal(b);
         }
         return a === b;
     }

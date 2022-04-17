@@ -36,7 +36,6 @@ export type FunctorFn = Function & {
 
 export class Rule {
     _source: RuleObj;
-    Replacements: Record<string, string> = {};
     Name: string;
     functors: Record<string, FunctorFn[]> = {}
     Breakpoints: { onTry?: OnTry } = {
@@ -44,8 +43,6 @@ export class Rule {
     }
 
     constructor(ruleObj: RuleObj, opts?: {
-        globalReplacements?: string[];
-        replacements?: string[];
         breakpoints?: boolean;
     }) {
         if (typeof ruleObj.name === 'undefined') {
@@ -53,7 +50,6 @@ export class Rule {
         }
 
         opts = opts || {}
-        opts.globalReplacements = opts.replacements || []
         opts.breakpoints = opts.breakpoints || false
 
         this._source = ruleObj
@@ -118,8 +114,6 @@ export class Rule {
 
     Fire(chr: CHR, constraint: { functor: string }) {
         const self = this
-        const replacements = this.Replacements
-
         return Promise.resolve().then(callback2Promise(this.Breakpoints.onTry, {
             event: 'rule:try',
             rule: self.Name,

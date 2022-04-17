@@ -83,4 +83,4 @@ export class LogicalVarTerm extends Term implements LogicalOwner {
     [_isLogicalOwner] = true as const;
 }
 
-export const lit = (value: boolean | string | number | null): Term => new FunTerm(value)
+export const lit = (value: boolean | string | number | null | undefined): Term => new FunTerm(value)

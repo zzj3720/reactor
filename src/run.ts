@@ -26,7 +26,7 @@ const prime = () => {
         })
     ]
 }
-chr.init({type: 'Program', body: prime()})
+chr.init(prime())
 const start = Date.now()
 Promise.all([
     chr.emit.count(1000)
