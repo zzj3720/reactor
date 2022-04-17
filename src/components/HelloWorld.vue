@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import {main} from "../reactor";
-main();
 defineProps<{ msg: string }>()
 
 const count = ref(0)

@@ -1,282 +1,207 @@
-type Predicate = {
-    args: any[]
-    ask: (...args: any[]) => boolean;
-    tell: (...args: any[]) => boolean
-}
-type Constraint = {
-    id: string;
-    args: any[];
-    toString(): string;
-}
-type BodyItem = Predicate | Constraint
-const metaLogicalSymbol = Symbol('metaLogical');
-type MetaLogical = {
-    [metaLogicalSymbol]: true;
-    name: string;
-    getLogical(): Logical
-}
-const MetaLogical = {
-    isMetaLogical(v: any): v is MetaLogical {
-        return v[metaLogicalSymbol];
-    }
-}
-const logicalSymbol = Symbol('logical')
-type Logical = {
-    [logicalSymbol]: true;
-    name: string;
-    get(): any,
-    set(v: any): void;
-    union(other: Logical): void;
-    toString(): string;
-}
-const Logical = {
-    isLogical(v: any): v is Logical {
-        return v[logicalSymbol]
-    }
-}
-type Rule = {
-    name: string;
-    keptList: Constraint[];
-    replaceList: Constraint[];
-    guardList: Predicate[];
-    bodyList: BodyItem[]
-}
-type Result = {}
-type LogicalStore = {
-    variable(metaLogical: MetaLogical): Logical
-};
-const createLogicalStore = (): LogicalStore => {
-    const map = new Map<MetaLogical, Logical>();
-    return {
-        variable(metaLogical: MetaLogical): Logical {
-            if (map.has(metaLogical)) {
-                return map.get(metaLogical)!
-            }
-            const logical = metaLogical.getLogical();
-            map.set(metaLogical, logical)
-            return logical
-        }
-    }
-}
-const rule = (ops: {
-    name: string;
-    headKept: Constraint[];
-    headReplace: Constraint[];
-    guard: Predicate[];
-    body: BodyItem[];
-}): Rule => {
-    return {
-        name: ops.name,
-        keptList: ops.headKept,
-        replaceList: ops.headReplace,
-        guardList: ops.guard,
-        bodyList: ops.body,
-    }
-}
-const constraint = (id: string, ...args: any[]): Constraint => {
-    return {
-        id,
-        args,
-        toString(): string {
-            return `${id}(${args.join(',')})`
-        }
-    }
-}
-const expression = <Args extends MetaLogical[]>(args: Args, block: (...args: { [K in keyof Args]: Logical }) => boolean): Predicate => {
-    return {
-        args,
-        tell: (args) => {
-            return block(...args)
-        },
-        ask: (args) => {
-            return block(...args)
-        },
-    }
-}
-const statement = <Args extends MetaLogical[]>(args: Args, block: (...args: { [K in keyof Args]: Logical }) => void): Predicate => {
-    return expression(args, (...args) => {
-        block(...args);
-        return true;
-    })
-}
-const createMetaLogical = (name: string): MetaLogical => {
-    let i = 0;
-    return {
-        [metaLogicalSymbol]: true,
-        name,
-        getLogical(): Logical {
-            i++;
-            return createLogical(name + '_' + i)
-        }
-    }
-}
-const createLogical = (name: string): Logical => {
-    let value: any;
-    return {
-        [logicalSymbol]: true,
-        name,
-        union(other: Logical) {
+import Runtime from './runtime'
+import {Rules} from './rules'
+import {ConstraintItem, Rule, RuleObj} from './rule'
+import type {Store} from "./store";
+import type {History} from "./history";
+import {Term, TermType} from "./term";
+import {Logical, MetaLogical} from "./logical";
+import {Constraint} from "./constraint";
+import {isLogical, isLogicalOwner, isMetaLogical, isTerm} from "./is";
 
-        },
-        get(): any {
-            return value;
-        },
-        set(v: any) {
-            value = v;
-        },
-        toString() {
-            return `${name}@${value ?? null}`
-        }
+const No_Value = {};
+
+type Subst = Record<string, unknown>;
+
+export class CHR {
+    Store: Store
+    History: History
+    Rules: Rules
+    Helper = Runtime.Helper
+    Constraints: Record<string, unknown[]> = {};
+    emit: Record<string, (...args: unknown[]) => void> = {};
+    functors: Record<string, unknown[]> = {};
+
+    get Functors() {
+        return Object.keys(this.Constraints)
     }
-}
-const metaLogical = <Args extends string[]>(...args: Args): { [K in Args[number]]: MetaLogical } => {
-    return args.reduce((acc, v) => {
-        acc[v] = createMetaLogical(v);
-        return acc;
-    }, {} as any)
-}
-const matchHead = (head: Constraint[], list: Constraint[]) => {
-    const run = (i: number, rest: Constraint[]): Constraint[][] => {
-        if (i === head.length) {
-            return [[]]
-        }
-        const currentHead = head[i];
-        const result: Constraint[][] = [];
-        for (let j = 0; j < rest.length; j++) {
-            const cst = rest[j];
-            if (cst.id === currentHead.id) {
-                const newRest = [...rest]
-                newRest.splice(j, 1)
-                result.push(...run(i + 1, newRest).map(arr => [cst, ...arr]))
-            }
-        }
-        return result;
+
+    constructor(opts?: {
+        store?: Store;
+        history?: History;
+        rules?: Rules;
+    }) {
+        opts = opts || {}
+        opts.store = opts.store || new Runtime.Store()
+        opts.history = opts.history || new Runtime.History()
+        opts.rules = opts.rules || new Rules(this)
+
+
+        this.Store = opts.store
+        this.History = opts.history
+        this.Rules = opts.rules
+        this.Helper = Runtime.Helper
     }
-    return run(0, list);
-}
-const variableArgs = (args: any[], logicalStore: LogicalStore) => {
-    return args.map(v => {
-        if (MetaLogical.isMetaLogical(v)) {
-            return logicalStore.variable(v);
-        }
-        return v;
-    })
-}
-const runRules = (rules: Rule[]): Constraint[] => {
-    const globalStore = new Set<Constraint>();
-    const activate = (cst: Constraint) => {
-        console.log(`+`, cst.toString())
-        globalStore.add(cst);
-        for (const rule of rules) {
-            const head = [...rule.keptList, ...rule.replaceList];
-            const matches = matchHead(head, [...globalStore]);
-            for (const match of matches) {
-                if (match.length !== head.length) {
-                    continue;
-                }
-                const logicalStore: LogicalStore = createLogicalStore();
-                match.forEach((v, i) => {
-                    v.args.forEach((matchV, j) => {
-                        const headV = logicalStore.variable(head[i].args[j]);
-                        if (Logical.isLogical(matchV)) {
-                            headV.set(matchV.get());
-                        } else {
-                            headV.set(matchV)
-                        }
-                    })
-                })
-                const result = rule.guardList.every(v => v.ask(variableArgs(v.args, logicalStore)))
-                if (!result) {
-                    continue;
-                }
-                console.log(`match ${rule.name}`, match.map(v => `${v.id}(${v.args.join(',')})`).join(', '))
-                match.slice(rule.keptList.length).forEach(cst => {
-                    globalStore.delete(cst)
-                    console.log(`-`, cst.toString())
-                });
-                for (const body of rule.bodyList) {
-                    if ('id' in body) {
-                        activate(constraint(body.id, ...variableArgs(body.args, logicalStore)));
-                    } else {
-                        body.tell(variableArgs(body.args, logicalStore))
-                    }
-                }
-                break;
-            }
-        }
-    }
-    activate(constraint('main'))
-    return [...globalStore];
-}
-const gcd = () => {
-    const l = metaLogical("M", "N", "TMP")
-    return [
-        rule({
-            name: 'main',
-            headKept: [],
-            headReplace: [constraint("main")],
-            guard: [],
-            body: [
-                statement([l.M, l.N], (m, n) => {
-                    m.set(21);
-                    n.set(35);
-                }),
-                constraint('gcd', l.M),
-                constraint('gcd', l.N),
-            ]
-        }),
-        rule({
-            name: 'trivial',
-            headKept: [],
-            headReplace: [constraint('gcd', l.M)],
-            guard: [expression([l.M], m => m.get() == 0)],
-            body: [
-                statement([], () => {
-                })
-            ]
-        }),
-        rule({
-            name: 'step',
-            headKept: [constraint('gcd', l.N)],
-            headReplace: [constraint('gcd', l.M)],
-            guard: [expression([l.M, l.N], (m, n) => {
-                return m.get() >= n.get()
-            })],
-            body: [
-                statement([l.M, l.N, l.TMP], (m, n, tmp) => tmp.set(m.get() - n.get())),
-                constraint('gcd', l.TMP)
-            ]
+
+    init(program: { type: 'Program', body: RuleObj[] }) {
+        const replacements: string[] = []
+        const rules = program.body
+        rules.forEach((rule) => {
+            this.Rules.Add(rule, replacements)
         })
-    ]
-}
-const prime = () => {
-    const l = metaLogical("M", "N")
-    return [
-        rule({
-            name: 'main',
-            headKept: [],
-            headReplace: [constraint("main")],
-            guard: [],
-            body: [
-                ...Array.from({length: 400}).map((_, i) => {
-                    return constraint('prime', i + 2)
-                })
-            ]
-        }),
-        rule({
-            name: 'prime',
-            headKept: [constraint('prime', l.M)],
-            headReplace: [constraint('prime', l.N)],
-            guard: [expression([l.M, l.N], (m, n) => n.get() % m.get() === 0)],
-            body: [
-                statement([], () => {
-                })
-            ]
-        }),
-    ]
-}
-export const main = () => {
-    const rules = prime();
-    const result = runRules(rules)
-    console.log(`result`, result.join(','))
+    }
+
+    argsMatch(subst: Subst, ptn: ConstraintItem, arg: Constraint) {
+        try {
+            const result = this.zipWhileTrue(ptn.parameters, arg.args, (a, b) => {
+                return this.ptnMatchAny(subst, a, b)
+            });
+            return result
+        } catch (e) {
+            console.error(e);
+            throw e;
+        }
+    }
+
+    ptnMatchAny(subst: Subst, a: unknown, b: unknown): boolean {
+        if (isMetaLogical(a)) {
+            const name = a.name();
+            if (name in subst) {
+                return this.matchAny(subst[name], b)
+            } else {
+                subst[name] = b;
+                // this.variable(subst,a);
+                return true;
+            }
+        }
+        if (isTerm(a)) {
+            if (a.is(TermType.Ref)) {
+                return this.ptnMatchAny(subst, this.resolve(a), b);
+            } else {
+                return this.ptnMatchTerm(subst, a, b);
+            }
+        }
+        if (isLogical(b)) {
+            return this.ptnMatchAny(subst, a, this.resolve(b));
+        }
+        return a === b;
+    }
+
+    ptnMatchTerm(subst: Subst, ptn: Term, trg: unknown): boolean {
+        const trgval = this.resolve(trg)
+        if (!(isTerm(trgval))) return false
+
+        if (ptn.is(TermType.Var)) return this.ptnMatchAny(subst, ptn.get().symbol(), trgval)
+
+        if (!this.ptnMatchAny(subst, ptn.get().symbol(), trgval.symbol())) return false
+
+        // FIXME: reversing the order of arguments leads to infinite cycle
+        // Example: two terms of the form f(... V_1 ...) and f(... V_2 ...) where
+        // V_1 is bound to g(... W_1 ...), V_2 -> g(... W_2 ...), W_1 -> f(... V_1 ...), and W_2 -> f(... V_2 ...)
+        return this.zipWhileTrue(ptn.get().args(), trgval.args(), (ptnarg, trgarg) => {
+            return this.ptnMatchAny(subst, ptnarg, trgarg)
+        })
+    }
+
+    zipWhileTrue(first: unknown[], second: unknown[], f: (a: unknown, b: unknown) => boolean) {
+        const length = Math.min(first.length, second.length);
+        for (let i = 0; i < length; i++) {
+            const a = first[i]
+            const b = second[i]
+            if (!f(a, b)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    resolve(a: unknown): unknown {
+        if (isLogicalOwner(a)) {
+            return a.logical().isBound() ? this.resolve(a.logical()) : a;
+        }
+        if (isLogical(a)) {
+            return a.isBound() ? a.find().value() : No_Value;
+        }
+        if (isTerm(a)) {
+            return a.is(TermType.Ref) ? this.resolve(a.get()) : a;
+        }
+        return a;
+    }
+
+    matchAny(a: unknown, b: unknown): boolean {
+        if (isLogical(a)) {
+            return this.matchLogical(a.find(), b)
+        }
+        if (isTerm(a)) {
+            if (a.is(TermType.Ref)) {
+                this.matchAny(this.resolve(a), b);
+            }
+            return this.matchTerm(a, b);
+        }
+        if (isLogical(b)) {
+            return this.matchAny(a, this.resolve(b));
+        }
+        return a === b;
+    }
+
+    matchTerm(a: Term, b: unknown) {
+        const rb = this.resolve(b);
+        if (!(isTerm(rb))) {
+            return false;
+        }
+        if (!this.matchAny(a.get().symbol(), rb.symbol())) return false
+
+        // FIXME: reversing the order of arguments leads to infinite cycle
+        // Example: two terms of the form f(... V_1 ...) and f(... V_2 ...) where
+        // V_1 is bound to g(... W_1 ...), V_2 -> g(... W_2 ...), W_1 -> f(... V_1 ...), and W_2 -> f(... V_2 ...)
+        return this.zipWhileTrue(a.get().args(), rb.args(), (larg, rarg) =>
+            this.matchAny(larg, rarg))
+    }
+
+    matchLogical(a: Logical, b: unknown): boolean {
+        if (isLogical(b)) {
+            if (a.isBound()) {
+                return this.matchAny(a.find().value(), this.resolve(b));
+            }
+            return a.find() === b.find();
+        }
+        if (a.isBound()) {
+            return this.matchAny(a.find().value(), b);
+        }
+        return false
+    }
+
+    instantiateArguments(subst: Subst, args: unknown[]) {
+        const result = args.map(v => {
+            if (isMetaLogical(v)) {
+                return this.variable(subst, v)
+            }
+            return v;
+        });
+        // console.log(`zuozijian src/reactor/index.ts:175`,result)
+        return result
+    }
+
+    variable(subst: Subst, metaLogic: MetaLogical): Logical {
+        const name = metaLogic.name();
+        let v = subst[name];
+        if (isLogical(v)) {
+            return v;
+        }
+        if (isLogicalOwner(v)) {
+            return v.logical();
+        }
+        const logic = new Logical(metaLogic, v)
+        subst[name] = logic;
+        return logic;
+    }
+
+
+    static Constraint = Runtime.Constraint
+    static Store = Runtime.Store
+    static History = Runtime.History
+    static Rule = Rule
+
+    static version = '__VERSION__'
+
+
 }
